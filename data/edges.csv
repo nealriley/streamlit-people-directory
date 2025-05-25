@@ -1,0 +1,4 @@
+id,source_id,target_id,type
+1,1,2,reports_to
+2,1,1,works_for
+3,2,1,works_for

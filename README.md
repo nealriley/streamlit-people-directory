@@ -1,7 +1,16 @@
-# Sales forecast
+# People Directory
 
-Streamlit example with fake data demonstrating how to build an awesome forecast app.
+Simple Streamlit demo storing people, companies and relationships in CSV files.
 
-See it in action:
+The app provides four views:
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://demo-forecast.streamlit.app)
+- **Search** – search for people or companies by name.
+- **Person** – edit a person and view all of their relationships.
+- **Company** – edit a company and view its relationships.
+- **Create** – add new people or companies.
+
+Run with:
+
+```bash
+streamlit run streamlit_app.py
+```
