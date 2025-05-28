@@ -1,0 +1,12 @@
+[
+  {
+    "name": "reports_to",
+    "from_type": "Person",
+    "to_type": "Person"
+  },
+  {
+    "name": "works_for",
+    "from_type": "Person",
+    "to_type": "Company"
+  }
+]
