@@ -1,70 +1,55 @@
-from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
+import os
+import hashlib
 
 import streamlit as st
 import pandas as pd
-import altair as alt
-from prophet import Prophet
-
-import pandas as pd
-from prophet import Prophet
-import streamlit as st
 
 st.set_page_config(
-    page_title="Sales units forecast",
-    page_icon=":money_mouth_face:",
+    page_title="HubSpot CRM Data Explorer",
+    page_icon="❄️",
+    layout="wide"
 )
 
-# Calculate reference dates
-TODAY = pd.to_datetime(datetime.now().date()) - timedelta(days=1)
-TOMORROW = TODAY + timedelta(days=1)
-ONE_MONTH_AGO = TODAY - relativedelta(months=1)
-THREE_MONTHS_AGO = TODAY - relativedelta(months=3)
-SIX_MONTHS_AGO = TODAY - relativedelta(months=6)
-ONE_YEAR_AGO = TODAY - relativedelta(years=1)
-TWO_YEARS_AGO = TODAY - relativedelta(years=2)
-
-DATE_COL = "Date"
-VALUE_COL = "Units sold"
-FORECAST_COL = "Forecast"
-UPPER_COL = "Lower bound"
-LOWER_COL = "Upper bound"
 
 
-def get_quarter_start(date):
-    year = date.year
-    if date.month in [1, 2, 3]:
-        return pd.to_datetime(datetime(year, 2, 1))
-    elif date.month in [4, 5, 6]:
-        return pd.to_datetime(datetime(year, 5, 1))
-    elif date.month in [7, 8, 9]:
-        return pd.to_datetime(datetime(year, 8, 1))
-    else:
-        return pd.to_datetime(datetime(year, 11, 1))
+################################################################
+# Authentication Functions
 
+def check_password():
+    """Returns True if the user had the correct password."""
+    
+    def password_entered():
+        """Checks whether a password entered by the user is correct."""
+        app_password = "hello"
+        if not app_password:
+            st.error("No password configured. Set STREAMLIT_PASSWORD environment variable.")
+            return
+            
+        if hashlib.sha256(st.session_state["password"].encode()).hexdigest() == hashlib.sha256(app_password.encode()).hexdigest():
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Don't store the password
+        else:
+            st.session_state["password_correct"] = False
 
-CURRENT_QUARTER_START = get_quarter_start(TODAY)
-LAST_QUARTER_START = CURRENT_QUARTER_START - relativedelta(months=3)
+    # Return True if the password is validated
+    if st.session_state.get("password_correct", False):
+        return True
 
-START_DATES = {
-    "Tomorrow": TOMORROW,
-    "1 month ago": ONE_MONTH_AGO,
-    "3 months ago": THREE_MONTHS_AGO,
-    "Beginning of this quarter": CURRENT_QUARTER_START,
-    "6 months ago": SIX_MONTHS_AGO,
-    "Beginning of last quarter": LAST_QUARTER_START,
-    "1 year ago": ONE_YEAR_AGO,
-    "2 years ago": TWO_YEARS_AGO,
-}
-
-# Define forecast periods mapping
-FORECAST_LENGTHS = {
-    "1 month": 30,
-    "3 months": 30 * 3,
-    "6 months": 30 * 6,
-    "1 year": 365,
-    "2 years": 730,
-}
+    # Show input for password
+    st.markdown("### 🔐 Login Required")
+    st.text_input(
+        "Password", 
+        type="password", 
+        on_change=password_entered, 
+        key="password",
+        help="Enter the application password to continue"
+    )
+    
+    if "password_correct" in st.session_state:
+        if not st.session_state["password_correct"]:
+            st.error("😕 Password incorrect")
+    
+    return False
 
 
 ################################################################
@@ -72,137 +57,210 @@ FORECAST_LENGTHS = {
 
 
 @st.cache_data
-def get_data():
-    df = pd.read_csv("data.csv")
-    df[DATE_COL] = pd.to_datetime(df[DATE_COL])
-    return df
+def execute_snowflake_query(query):
+    """Execute a query against Snowflake and return results."""
+    try:
+        conn = st.connection("snowflake", type="snowflake")
+        df = conn.query(query, ttl=300)  # Cache for 5 minutes
+        return df
+    except Exception as e:
+        st.error(f"Failed to execute query: {str(e)}")
+        st.info("Please check your connection configuration in .streamlit/secrets.toml")
+        return None
 
 
 @st.cache_data
-def run_forecast_model(
-    df,
-    forecast_start,
-    forecast_days,
-    **prophet_kwargs,
-):
-    # Filter data up to forecast start
-    prophet_df = pd.DataFrame(
-        {
-            "ds": pd.to_datetime(df[df[DATE_COL] <= forecast_start][DATE_COL]),
-            "y": df[df[DATE_COL] <= forecast_start][VALUE_COL].astype(float),
-        }
+def get_companies_data(limit=100, object_id=None):
+    """Get companies data from HubSpot CRM."""
+    if object_id:
+        query = f"""
+        SELECT *
+        FROM PROD_HUBSPOT.HUBSPOT_CRM.COMPANIES
+        WHERE ID = '{object_id}'
+        """
+    else:
+        query = f"""
+        SELECT *
+        FROM PROD_HUBSPOT.HUBSPOT_CRM.COMPANIES
+        LIMIT {limit}
+        """
+    return execute_snowflake_query(query)
+
+
+@st.cache_data
+def get_contacts_data(limit=100, object_id=None):
+    """Get contacts data from HubSpot CRM."""
+    if object_id:
+        query = f"""
+        SELECT *
+        FROM PROD_HUBSPOT.HUBSPOT_CRM.CONTACTS
+        WHERE ID = '{object_id}'
+        """
+    else:
+        query = f"""
+        SELECT *
+        FROM PROD_HUBSPOT.HUBSPOT_CRM.CONTACTS
+        LIMIT {limit}
+        """
+    return execute_snowflake_query(query)
+
+
+def display_table_info(df, table_name):
+    """Display basic information about a table."""
+    if df is not None and len(df) > 0:
+        st.success(f"Loaded {len(df)} rows from {table_name}")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Rows", len(df))
+            st.metric("Columns", len(df.columns))
+        with col2:
+            st.write("**Column Names:**")
+            st.write(list(df.columns))
+            
+        with st.expander("Column Data Types"):
+            st.write(df.dtypes.to_frame("Data Type"))
+    else:
+        st.error(f"No data found for {table_name}")
+
+
+################################################################
+# Page Functions
+
+def show_companies_page():
+    """Display the Companies page."""
+    st.header("🏢 Companies")
+    st.write("Data from PROD_HUBSPOT.HUBSPOT_CRM.COMPANIES")
+    
+    # Check for query parameter
+    query_params = st.query_params
+    object_id = query_params.get("id")
+    
+    if object_id:
+        st.info(f"🔍 Filtering by HS_OBJECT_ID: {object_id}")
+        # Auto-execute query for specific ID
+        with st.spinner("Loading company data..."):
+            df = get_companies_data(object_id=object_id)
+            if df is not None:
+                st.session_state.companies_df = df
+    else:
+        # Controls for general browsing
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            limit = st.number_input("Rows to load", min_value=10, max_value=1000, value=100, step=10)
+        with col2:
+            if st.button("Load Companies Data", type="primary"):
+                with st.spinner("Loading companies data..."):
+                    df = get_companies_data(limit)
+                    if df is not None:
+                        st.session_state.companies_df = df
+    
+    # Display data if available
+    if 'companies_df' in st.session_state:
+        df = st.session_state.companies_df
+        display_table_info(df, "Companies")
+        
+        st.subheader("Companies Data")
+        st.dataframe(df, use_container_width=True)
+
+
+def show_contacts_page():
+    """Display the Contacts page."""
+    st.header("👥 Contacts")
+    st.write("Data from PROD_HUBSPOT.HUBSPOT_CRM.CONTACTS")
+    
+    # Check for query parameter
+    query_params = st.query_params
+    object_id = query_params.get("id")
+    
+    if object_id:
+        st.info(f"🔍 Filtering by HS_OBJECT_ID: {object_id}")
+        # Auto-execute query for specific ID
+        with st.spinner("Loading contact data..."):
+            df = get_contacts_data(object_id=object_id)
+            if df is not None:
+                st.session_state.contacts_df = df
+    else:
+        # Controls for general browsing
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            limit = st.number_input("Rows to load", min_value=10, max_value=1000, value=100, step=10)
+        with col2:
+            if st.button("Load Contacts Data", type="primary"):
+                with st.spinner("Loading contacts data..."):
+                    df = get_contacts_data(limit)
+                    if df is not None:
+                        st.session_state.contacts_df = df
+    
+    # Display data if available
+    if 'contacts_df' in st.session_state:
+        df = st.session_state.contacts_df
+        display_table_info(df, "Contacts")
+        
+        st.subheader("Contacts Data")
+        st.dataframe(df, use_container_width=True)
+
+
+def show_query_page():
+    """Display the custom query page."""
+    st.header("🔍 Custom Query")
+    st.write("Execute custom SQL queries against your Snowflake database")
+    
+    # Query input
+    query = st.text_area(
+        "Enter your SQL query:",
+        height=150,
+        placeholder="SELECT * FROM PROD_HUBSPOT.HUBSPOT_CRM.COMPANIES LIMIT 10;",
+        help="Enter any valid SQL query to execute against your Snowflake database"
     )
-
-    model = Prophet(**prophet_kwargs)
-
-    model.fit(prophet_df)
-
-    future = model.make_future_dataframe(periods=forecast_days)
-    forecast = model.predict(future)
-
-    # Prepare visualization data
-    fore_df = forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]].rename(
-        columns={
-            "ds": DATE_COL,
-            "yhat": FORECAST_COL,
-            "yhat_lower": LOWER_COL,
-            "yhat_upper": UPPER_COL,
-        }
-    )
-
-    # Only keep the actual forecast, not the model of the past.
-    # fore_df = fore_df[fore_df["TS"] >= forecast_start]
-
-    return df, fore_df
+    
+    # Execute button
+    if st.button("Execute Query", type="primary"):
+        if not query.strip():
+            st.error("Please enter a SQL query")
+        else:
+            with st.spinner("Executing query..."):
+                df = execute_snowflake_query(query)
+                
+                if df is not None:
+                    st.success(f"Query executed successfully! Returned {len(df)} rows.")
+                    
+                    # Display results
+                    st.subheader("Query Results")
+                    st.dataframe(df, use_container_width=True)
+                    
+                    # Show basic info about the results
+                    if len(df) > 0:
+                        display_table_info(df, "Query Results")
 
 
 ################################################################
 # Application logic
 
 """
-# :money_mouth_face: Sales units forecast
+# ❄️ HubSpot CRM Data Explorer
 
-Streamlit example with fake data demonstrating how to build an awesome forecast app.
+Explore your HubSpot CRM data with dedicated pages for Companies and Contacts.
 """
 
-""
+# Check authentication first
+if not check_password():
+    st.stop()
 
-df = get_data()
+st.info("💡 **Setup Required**: Create `.streamlit/secrets.toml` with your Snowflake connection details")
 
-cols = st.columns(2)
-selected_timeframe = cols[0].selectbox(
-    "Forecast start date",
-    options=list(START_DATES.keys()),
-)
-forecast_start = START_DATES[selected_timeframe]
-
-forecast_period = cols[1].selectbox(
-    "Forecast length",
-    options=list(FORECAST_LENGTHS.keys()),
-)
-forecast_days = FORECAST_LENGTHS[forecast_period]
-
-""
-""
-
-hist_df, fore_df = run_forecast_model(
-    df,
-    forecast_start,
-    forecast_days,
-    #
-    # Pass Prophet parameters here.
-    #
-    # If you change the data and do not do some tweaking, the forecast will
-    # likely be completely off!
-    #
-    # Documentation:
-    # https://facebook.github.io/prophet/docs/diagnostics.html
-    #
-    # Example parameters:
-    changepoint_prior_scale=0.05,  # Default=0.05
-    seasonality_prior_scale=10.0,  # Default=10.0
-    holidays_prior_scale=10.0,  # Default=10.0
-    # Changed below to better match end of historical trend,
-    # using a value proposed by the docs as reasonable when
-    # there's a large historical series.
-    changepoint_range=0.95,  # Default=0.8
-    # Changed below to better match ground truth.
-    seasonality_mode="multiplicative",  # Default="additive"
+# Sidebar navigation
+st.sidebar.title("Navigation")
+page = st.sidebar.selectbox(
+    "Choose a page:",
+    ["Companies", "Contacts", "Custom Query"],
+    help="Select which data to explore"
 )
 
-
-# Create visualization
-base = (
-    alt.Chart(hist_df)
-    .mark_line(color="blue", tooltip=True)
-    .encode(
-        alt.X(DATE_COL, type="temporal", title=None),
-        alt.Y(VALUE_COL, type="quantitative", title=None),
-    )
-    .interactive()
-)
-
-forecast_line = (
-    alt.Chart(fore_df)
-    .mark_line(color="red", strokeWidth=1, tooltip=True)
-    .encode(
-        alt.X(DATE_COL, type="temporal", title=None),
-        alt.Y(FORECAST_COL, type="quantitative", title="Forecast"),
-    )
-)
-
-confidence_area = (
-    alt.Chart(fore_df)
-    .mark_area(opacity=0.2, color="red", tooltip=True)
-    .encode(
-        alt.X(DATE_COL, type="temporal", title=None),
-        alt.Y(LOWER_COL, type="quantitative", title="Forecast lower bound"),
-        alt.Y2(UPPER_COL, title="Forecast upper bound"),
-    )
-)
-
-chart = base + confidence_area + forecast_line
-st.altair_chart(chart, use_container_width=True)
-
-with st.expander("Raw data"):
-    df
+# Display selected page
+if page == "Companies":
+    show_companies_page()
+elif page == "Contacts":
+    show_contacts_page()
+elif page == "Custom Query":
+    show_query_page()
