@@ -28,6 +28,11 @@ Create each edge table by running the scripts in the `edges/` folder:
 -- Copy and paste content from: edges/worked_for.sql
 ```
 
+#### REPORTED_TO Edge
+```sql
+-- Copy and paste content from: edges/reported_to.sql
+```
+
 ## Edge Table Structure
 
 ### WORKED_FOR Table
@@ -58,6 +63,36 @@ WHERE TO_NODE_ID = 'company_456' AND IS_CURRENT = TRUE;
 -- Find employment history for a contact
 SELECT * FROM WORKED_FOR 
 WHERE FROM_NODE_ID = 'contact_123' 
+ORDER BY START_DATE DESC;
+```
+
+### REPORTED_TO Table
+Represents reporting relationships: `CONTACT --[REPORTED_TO]--> CONTACT`
+
+**Key Fields:**
+- `FROM_NODE_ID`: Employee Contact ID (references `CONTACTS.ID`)
+- `TO_NODE_ID`: Manager Contact ID (references `CONTACTS.ID`)
+- `START_DATE`: Reporting relationship start date
+- `END_DATE`: Reporting relationship end date (NULL = current)
+- `IS_CURRENT`: Whether this is a current reporting relationship
+- `RELATIONSHIP_TYPE`: Type of reporting (e.g., 'DIRECT_REPORT', 'DOTTED_LINE', 'MATRIX')
+
+**Example Usage:**
+```sql
+-- Insert a current reporting relationship
+INSERT INTO SANDBOX_NRILEY.GRAPH_EDGES.REPORTED_TO (
+    FROM_NODE_ID, TO_NODE_ID, START_DATE, RELATIONSHIP_TYPE, IS_CURRENT, SOURCE_SYSTEM
+) VALUES (
+    'employee_123', 'manager_456', '2023-01-15', 'DIRECT_REPORT', TRUE, 'MANUAL'
+);
+
+-- Find all direct reports for a manager
+SELECT * FROM REPORTED_TO 
+WHERE TO_NODE_ID = 'manager_456' AND IS_CURRENT = TRUE;
+
+-- Find reporting history for an employee
+SELECT * FROM REPORTED_TO 
+WHERE FROM_NODE_ID = 'employee_123' 
 ORDER BY START_DATE DESC;
 ```
 
